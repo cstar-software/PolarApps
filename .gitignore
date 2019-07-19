@@ -1,6 +1,4 @@
 # Specify filepatterns you want git to ignore.
 
-Treated40/
-
 dist/
 node_modules/
