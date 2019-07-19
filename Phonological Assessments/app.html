@@ -1,0 +1,43 @@
+<html>
+<head>
+  <link rel="stylesheet" href="./css/app.css">
+</head>
+<body onload="openNav()">
+  <div id="containerDiv" class="container">
+    <div id="navPanel" class="nav">
+      <div class="menuBtn">
+        <span id="closeNavBtn" class="closebtn" onclick="toggleNav()"></span>
+      </div>
+      <div class="menuList">
+        <form action="hideNav()">
+          <label for="subjID">Participant</label>
+          <input type="text" id="subjID" name="subjid" placeholder="0">
+
+          <label for="sessID">Session</label>
+          <input type="text" id="sessID" name="sessid" placeholder="0">
+
+          <label for="assessmentID">Assessment</label>
+          <select id="assessmentID" name="assessmentType">
+            <option value=""></option>
+            <option value="palpa1">Palpa 1</option>
+            <option value="palpa2">Palpa 2</option>
+            <option value="palpa8">Palpa 8</option>
+            <option value="palpa14">Palpa 14</option>
+            <option value="palpa15">Palpa 15</option>
+            <option value="palpa16">Palpa 16</option>
+            <option value="palpa17">Palpa 17</option>
+          </select>
+
+          <button type="button" onclick="getStarted()">Start</button>
+        </form>
+      </div>
+    </div>
+    <div id="contentDiv" class="content">
+    </div>
+  </div>
+  <script type="text/javascript" src="./js/lowLag.js"></script>
+  <script type="text/javascript" src="./core.js"></script>
+  <script type="text/javascript" src="./menu.js"></script>
+  <script type="text/javascript" src="./cloudChecker.js"></script>
+</body>
+</html>
