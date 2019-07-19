@@ -1,0 +1,52 @@
+{
+  "name": "Discourse",
+  "version": "1.2.16",
+  "description": "A set of common discourse measures used in assessing speech production after stroke ",
+  "main": "app.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "start": "electron app.js",
+    "build-mac": "electron-packager . --out=dist --icon ./icon.icns --platform=darwin --overwrite --tmpdir=false",
+    "osx-sign": "codesign --deep --force --verbose -s 'Developer ID Application' ./dist/Discourse-darwin-x64/Discourse.app",
+    "startAppWithLogging": "./dist/Discourse-darwin-x64/Discourse.app/Contents/MacOS/Discourse"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/hanayik/Discourse-Assessments.git"
+  },
+  "keywords": [
+    "speech",
+    "psychology",
+    "aphasia",
+    "test",
+    "language",
+    "stroke"
+  ],
+  "author": "Taylor Hanayik",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/hanayik/Discourse-Assessments/issues"
+  },
+  "homepage": "https://github.com/hanayik/Discourse-Assessments#readme",
+  "devDependencies": {
+    "app-root-dir": "^1.0.2",
+    "csvsync": "^1.0.1",
+    "electron": "^1.8.2",
+    "electron-packager": "^8.7.2",
+    "jQuery": "^1.7.4",
+    "moment": "^2.17.1",
+    "systeminformation": "^3.16.0"
+  },
+  "dependencies": {
+    "app-root-dir": "^1.0.2",
+    "csvsync": "^1.0.1",
+    "electron-notifications": "^0.1.6",
+    "electron-settings": "^3.0.10",
+    "jQuery": "^1.7.4",
+    "mkdirp": "^0.5.1",
+    "moment": "^2.17.1",
+    "node-natural-sort": "^0.8.6",
+    "system-control": "0.0.5",
+    "systeminformation": "^3.16.0"
+  }
+}
