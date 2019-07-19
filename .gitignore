@@ -1,6 +1,5 @@
 # Specify filepatterns you want git to ignore.
 
-PNT/
 PRT/
 Treated40/
 
