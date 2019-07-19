@@ -1,0 +1,1740 @@
+FFMPEG(1)                                                            FFMPEG(1)
+
+
+
+NNAAMMEE
+       ffmpeg - ffmpeg video converter
+
+SSYYNNOOPPSSIISS
+       ffmpeg [_g_l_o_b_a_l___o_p_t_i_o_n_s] {[_i_n_p_u_t___f_i_l_e___o_p_t_i_o_n_s] -i _i_n_p_u_t___f_i_l_e} ...
+       {[_o_u_t_p_u_t___f_i_l_e___o_p_t_i_o_n_s] _o_u_t_p_u_t___f_i_l_e} ...
+
+DDEESSCCRRIIPPTTIIOONN
+       ffffmmppeegg is a very fast video and audio converter that can also grab from
+       a live audio/video source. It can also convert between arbitrary sample
+       rates and resize video on the fly with a high quality polyphase filter.
+
+       ffffmmppeegg reads from an arbitrary number of input "files" (which can be
+       regular files, pipes, network streams, grabbing devices, etc.),
+       specified by the "-i" option, and writes to an arbitrary number of
+       output "files", which are specified by a plain output filename.
+       Anything found on the command line which cannot be interpreted as an
+       option is considered to be an output filename.
+
+       Each input or output file can, in principle, contain any number of
+       streams of different types (video/audio/subtitle/attachment/data). The
+       allowed number and/or types of streams may be limited by the container
+       format. Selecting which streams from which inputs will go into which
+       output is either done automatically or with the "-map" option (see the
+       Stream selection chapter).
+
+       To refer to input files in options, you must use their indices
+       (0-based). E.g.  the first input file is 0, the second is 1, etc.
+       Similarly, streams within a file are referred to by their indices. E.g.
+       "2:3" refers to the fourth stream in the third input file. Also see the
+       Stream specifiers chapter.
+
+       As a general rule, options are applied to the next specified file.
+       Therefore, order is important, and you can have the same option on the
+       command line multiple times. Each occurrence is then applied to the
+       next input or output file.  Exceptions from this rule are the global
+       options (e.g. verbosity level), which should be specified first.
+
+       Do not mix input and output files -- first specify all input files,
+       then all output files. Also do not mix options which belong to
+       different files. All options apply ONLY to the next input or output
+       file and are reset between files.
+
+       +o   To set the video bitrate of the output file to 64 kbit/s:
+
+                   ffmpeg -i input.avi -b:v 64k -bufsize 64k output.avi
+
+       +o   To force the frame rate of the output file to 24 fps:
+
+                   ffmpeg -i input.avi -r 24 output.avi
+
+       +o   To force the frame rate of the input file (valid for raw formats
+           only) to 1 fps and the frame rate of the output file to 24 fps:
+
+                   ffmpeg -r 1 -i input.m2v -r 24 output.avi
+
+       The format option may be needed for raw input files.
+
+DDEETTAAIILLEEDD DDEESSCCRRIIPPTTIIOONN
+       The transcoding process in ffffmmppeegg for each output can be described by
+       the following diagram:
+
+                _______              ______________
+               |       |            |              |
+               | input |  demuxer   | encoded data |   decoder
+               | file  | ---------> | packets      | -----+
+               |_______|            |______________|      |
+                                                          v
+                                                      _________
+                                                     |         |
+                                                     | decoded |
+                                                     | frames  |
+                                                     |_________|
+                ________             ______________       |
+               |        |           |              |      |
+               | output | <-------- | encoded data | <----+
+               | file   |   muxer   | packets      |   encoder
+               |________|           |______________|
+
+       ffffmmppeegg calls the libavformat library (containing demuxers) to read
+       input files and get packets containing encoded data from them. When
+       there are multiple input files, ffffmmppeegg tries to keep them synchronized
+       by tracking lowest timestamp on any active input stream.
+
+       Encoded packets are then passed to the decoder (unless streamcopy is
+       selected for the stream, see further for a description). The decoder
+       produces uncompressed frames (raw video/PCM audio/...) which can be
+       processed further by filtering (see next section). After filtering, the
+       frames are passed to the encoder, which encodes them and outputs
+       encoded packets. Finally those are passed to the muxer, which writes
+       the encoded packets to the output file.
+
+   FFiilltteerriinngg
+       Before encoding, ffffmmppeegg can process raw audio and video frames using
+       filters from the libavfilter library. Several chained filters form a
+       filter graph. ffffmmppeegg distinguishes between two types of filtergraphs:
+       simple and complex.
+
+       _S_i_m_p_l_e _f_i_l_t_e_r_g_r_a_p_h_s
+
+       Simple filtergraphs are those that have exactly one input and output,
+       both of the same type. In the above diagram they can be represented by
+       simply inserting an additional step between decoding and encoding:
+
+                _________                        ______________
+               |         |                      |              |
+               | decoded |                      | encoded data |
+               | frames  |\                   _ | packets      |
+               |_________| \                  /||______________|
+                            \   __________   /
+                 simple     _\||          | /  encoder
+                 filtergraph   | filtered |/
+                               | frames   |
+                               |__________|
+
+       Simple filtergraphs are configured with the per-stream --ffiilltteerr option
+       (with --vvff and --aaff aliases for video and audio respectively).  A simple
+       filtergraph for video can look for example like this:
+
+                _______        _____________        _______        ________
+               |       |      |             |      |       |      |        |
+               | input | ---> | deinterlace | ---> | scale | ---> | output |
+               |_______|      |_____________|      |_______|      |________|
+
+       Note that some filters change frame properties but not frame contents.
+       E.g. the "fps" filter in the example above changes number of frames,
+       but does not touch the frame contents. Another example is the "setpts"
+       filter, which only sets timestamps and otherwise passes the frames
+       unchanged.
+
+       _C_o_m_p_l_e_x _f_i_l_t_e_r_g_r_a_p_h_s
+
+       Complex filtergraphs are those which cannot be described as simply a
+       linear processing chain applied to one stream. This is the case, for
+       example, when the graph has more than one input and/or output, or when
+       output stream type is different from input. They can be represented
+       with the following diagram:
+
+                _________
+               |         |
+               | input 0 |\                    __________
+               |_________| \                  |          |
+                            \   _________    /| output 0 |
+                             \ |         |  / |__________|
+                _________     \| complex | /
+               |         |     |         |/
+               | input 1 |---->| filter  |\
+               |_________|     |         | \   __________
+                              /| graph   |  \ |          |
+                             / |         |   \| output 1 |
+                _________   /  |_________|    |__________|
+               |         | /
+               | input 2 |/
+               |_________|
+
+       Complex filtergraphs are configured with the --ffiilltteerr__ccoommpplleexx option.
+       Note that this option is global, since a complex filtergraph, by its
+       nature, cannot be unambiguously associated with a single stream or
+       file.
+
+       The --llaavvffii option is equivalent to --ffiilltteerr__ccoommpplleexx.
+
+       A trivial example of a complex filtergraph is the "overlay" filter,
+       which has two video inputs and one video output, containing one video
+       overlaid on top of the other. Its audio counterpart is the "amix"
+       filter.
+
+   SSttrreeaamm ccooppyy
+       Stream copy is a mode selected by supplying the "copy" parameter to the
+       --ccooddeecc option. It makes ffffmmppeegg omit the decoding and encoding step for
+       the specified stream, so it does only demuxing and muxing. It is useful
+       for changing the container format or modifying container-level
+       metadata. The diagram above will, in this case, simplify to this:
+
+                _______              ______________            ________
+               |       |            |              |          |        |
+               | input |  demuxer   | encoded data |  muxer   | output |
+               | file  | ---------> | packets      | -------> | file   |
+               |_______|            |______________|          |________|
+
+       Since there is no decoding or encoding, it is very fast and there is no
+       quality loss. However, it might not work in some cases because of many
+       factors. Applying filters is obviously also impossible, since filters
+       work on uncompressed data.
+
+SSTTRREEAAMM SSEELLEECCTTIIOONN
+       By default, ffffmmppeegg includes only one stream of each type (video, audio,
+       subtitle) present in the input files and adds them to each output file.
+       It picks the "best" of each based upon the following criteria: for
+       video, it is the stream with the highest resolution, for audio, it is
+       the stream with the most channels, for subtitles, it is the first
+       subtitle stream. In the case where several streams of the same type
+       rate equally, the stream with the lowest index is chosen.
+
+       You can disable some of those defaults by using the "-vn/-an/-sn"
+       options. For full manual control, use the "-map" option, which disables
+       the defaults just described.
+
+OOPPTTIIOONNSS
+       All the numerical options, if not specified otherwise, accept a string
+       representing a number as input, which may be followed by one of the SI
+       unit prefixes, for example: 'K', 'M', or 'G'.
+
+       If 'i' is appended to the SI unit prefix, the complete prefix will be
+       interpreted as a unit prefix for binary multiples, which are based on
+       powers of 1024 instead of powers of 1000. Appending 'B' to the SI unit
+       prefix multiplies the value by 8. This allows using, for example: 'KB',
+       'MiB', 'G' and 'B' as number suffixes.
+
+       Options which do not take arguments are boolean options, and set the
+       corresponding value to true. They can be set to false by prefixing the
+       option name with "no". For example using "-nofoo" will set the boolean
+       option with name "foo" to false.
+
+   SSttrreeaamm ssppeecciiffiieerrss
+       Some options are applied per-stream, e.g. bitrate or codec. Stream
+       specifiers are used to precisely specify which stream(s) a given option
+       belongs to.
+
+       A stream specifier is a string generally appended to the option name
+       and separated from it by a colon. E.g. "-codec:a:1 ac3" contains the
+       "a:1" stream specifier, which matches the second audio stream.
+       Therefore, it would select the ac3 codec for the second audio stream.
+
+       A stream specifier can match several streams, so that the option is
+       applied to all of them. E.g. the stream specifier in "-b:a 128k"
+       matches all audio streams.
+
+       An empty stream specifier matches all streams. For example, "-codec
+       copy" or "-codec: copy" would copy all the streams without reencoding.
+
+       Possible forms of stream specifiers are:
+
+       _s_t_r_e_a_m___i_n_d_e_x
+           Matches the stream with this index. E.g. "-threads:1 4" would set
+           the thread count for the second stream to 4.
+
+       _s_t_r_e_a_m___t_y_p_e[[::_s_t_r_e_a_m___i_n_d_e_x]]
+           _s_t_r_e_a_m___t_y_p_e is one of following: 'v' for video, 'a' for audio, 's'
+           for subtitle, 'd' for data, and 't' for attachments. If
+           _s_t_r_e_a_m___i_n_d_e_x is given, then it matches stream number _s_t_r_e_a_m___i_n_d_e_x
+           of this type. Otherwise, it matches all streams of this type.
+
+       pp::_p_r_o_g_r_a_m___i_d[[::_s_t_r_e_a_m___i_n_d_e_x]]
+           If _s_t_r_e_a_m___i_n_d_e_x is given, then it matches the stream with number
+           _s_t_r_e_a_m___i_n_d_e_x in the program with the id _p_r_o_g_r_a_m___i_d. Otherwise, it
+           matches all streams in the program.
+
+       ##_s_t_r_e_a_m___i_d oorr ii::_s_t_r_e_a_m___i_d
+           Match the stream by stream id (e.g. PID in MPEG-TS container).
+
+       mm::_k_e_y[[::_v_a_l_u_e]]
+           Matches streams with the metadata tag _k_e_y having the specified
+           value. If _v_a_l_u_e is not given, matches streams that contain the
+           given tag with any value.
+
+           Note that in ffffmmppeegg, matching by metadata will only work properly
+           for input files.
+
+   GGeenneerriicc ooppttiioonnss
+       These options are shared amongst the ff* tools.
+
+       --LL  Show license.
+
+       --hh,, --??,, --hheellpp,, ----hheellpp [[_a_r_g]]
+           Show help. An optional parameter may be specified to print help
+           about a specific item. If no argument is specified, only basic (non
+           advanced) tool options are shown.
+
+           Possible values of _a_r_g are:
+
+           lloonngg
+               Print advanced tool options in addition to the basic tool
+               options.
+
+           ffuullll
+               Print complete list of options, including shared and private
+               options for encoders, decoders, demuxers, muxers, filters, etc.
+
+           ddeeccooddeerr==_d_e_c_o_d_e_r___n_a_m_e
+               Print detailed information about the decoder named
+               _d_e_c_o_d_e_r___n_a_m_e. Use the --ddeeccooddeerrss option to get a list of all
+               decoders.
+
+           eennccooddeerr==_e_n_c_o_d_e_r___n_a_m_e
+               Print detailed information about the encoder named
+               _e_n_c_o_d_e_r___n_a_m_e. Use the --eennccooddeerrss option to get a list of all
+               encoders.
+
+           ddeemmuuxxeerr==_d_e_m_u_x_e_r___n_a_m_e
+               Print detailed information about the demuxer named
+               _d_e_m_u_x_e_r___n_a_m_e. Use the --ffoorrmmaattss option to get a list of all
+               demuxers and muxers.
+
+           mmuuxxeerr==_m_u_x_e_r___n_a_m_e
+               Print detailed information about the muxer named _m_u_x_e_r___n_a_m_e.
+               Use the --ffoorrmmaattss option to get a list of all muxers and
+               demuxers.
+
+           ffiilltteerr==_f_i_l_t_e_r___n_a_m_e
+               Print detailed information about the filter name _f_i_l_t_e_r___n_a_m_e.
+               Use the --ffiilltteerrss option to get a list of all filters.
+
+       --vveerrssiioonn
+           Show version.
+
+       --ffoorrmmaattss
+           Show available formats (including devices).
+
+       --ddeevviicceess
+           Show available devices.
+
+       --ccooddeeccss
+           Show all codecs known to libavcodec.
+
+           Note that the term 'codec' is used throughout this documentation as
+           a shortcut for what is more correctly called a media bitstream
+           format.
+
+       --ddeeccooddeerrss
+           Show available decoders.
+
+       --eennccooddeerrss
+           Show all available encoders.
+
+       --bbssffss
+           Show available bitstream filters.
+
+       --pprroottooccoollss
+           Show available protocols.
+
+       --ffiilltteerrss
+           Show available libavfilter filters.
+
+       --ppiixx__ffmmttss
+           Show available pixel formats.
+
+       --ssaammppllee__ffmmttss
+           Show available sample formats.
+
+       --llaayyoouuttss
+           Show channel names and standard channel layouts.
+
+       --ccoolloorrss
+           Show recognized color names.
+
+       --ssoouurrcceess _d_e_v_i_c_e[[,,_o_p_t_1==_v_a_l_1[[,,_o_p_t_2==_v_a_l_2]]......]]
+           Show autodetected sources of the intput device.  Some devices may
+           provide system-dependent source names that cannot be autodetected.
+           The returned list cannot be assumed to be always complete.
+
+                   ffmpeg -sources pulse,server=192.168.0.4
+
+       --ssiinnkkss _d_e_v_i_c_e[[,,_o_p_t_1==_v_a_l_1[[,,_o_p_t_2==_v_a_l_2]]......]]
+           Show autodetected sinks of the output device.  Some devices may
+           provide system-dependent sink names that cannot be autodetected.
+           The returned list cannot be assumed to be always complete.
+
+                   ffmpeg -sinks pulse,server=192.168.0.4
+
+       --lloogglleevveell [[rreeppeeaatt++]]_l_o_g_l_e_v_e_l || --vv [[rreeppeeaatt++]]_l_o_g_l_e_v_e_l
+           Set the logging level used by the library.  Adding "repeat+"
+           indicates that repeated log output should not be compressed to the
+           first line and the "Last message repeated n times" line will be
+           omitted. "repeat" can also be used alone.  If "repeat" is used
+           alone, and with no prior loglevel set, the default loglevel will be
+           used. If multiple loglevel parameters are given, using 'repeat'
+           will not change the loglevel.  _l_o_g_l_e_v_e_l is a number or a string
+           containing one of the following values:
+
+           qquuiieett
+               Show nothing at all; be silent.
+
+           ppaanniicc
+               Only show fatal errors which could lead the process to crash,
+               such as and assert failure. This is not currently used for
+               anything.
+
+           ffaattaall
+               Only show fatal errors. These are errors after which the
+               process absolutely cannot continue after.
+
+           eerrrroorr
+               Show all errors, including ones which can be recovered from.
+
+           wwaarrnniinngg
+               Show all warnings and errors. Any message related to possibly
+               incorrect or unexpected events will be shown.
+
+           iinnffoo
+               Show informative messages during processing. This is in
+               addition to warnings and errors. This is the default value.
+
+           vveerrbboossee
+               Same as "info", except more verbose.
+
+           ddeebbuugg
+               Show everything, including debugging information.
+
+           By default the program logs to stderr, if coloring is supported by
+           the terminal, colors are used to mark errors and warnings. Log
+           coloring can be disabled setting the environment variable
+           AAVV__LLOOGG__FFOORRCCEE__NNOOCCOOLLOORR or NNOO__CCOOLLOORR, or can be forced setting the
+           environment variable AAVV__LLOOGG__FFOORRCCEE__CCOOLLOORR.  The use of the
+           environment variable NNOO__CCOOLLOORR is deprecated and will be dropped in
+           a following FFmpeg version.
+
+       --rreeppoorrtt
+           Dump full command line and console output to a file named
+           "program-YYYYMMDD-HHMMSS.log" in the current directory.  This file
+           can be useful for bug reports.  It also implies "-loglevel
+           verbose".
+
+           Setting the environment variable "FFREPORT" to any value has the
+           same effect. If the value is a ':'-separated key=value sequence,
+           these options will affect the report; options values must be
+           escaped if they contain special characters or the options delimiter
+           ':' (see the ``Quoting and escaping'' section in the ffmpeg-utils
+           manual). The following option is recognized:
+
+           ffiillee
+               set the file name to use for the report; %p is expanded to the
+               name of the program, %t is expanded to a timestamp, "%%" is
+               expanded to a plain "%"
+
+           lleevveell
+               set the log level
+
+           Errors in parsing the environment variable are not fatal, and will
+           not appear in the report.
+
+       --hhiiddee__bbaannnneerr
+           Suppress printing banner.
+
+           All FFmpeg tools will normally show a copyright notice, build
+           options and library versions. This option can be used to suppress
+           printing this information.
+
+       --ccppuuffllaaggss ffllaaggss ((_g_l_o_b_a_l))
+           Allows setting and clearing cpu flags. This option is intended for
+           testing. Do not use it unless you know what you're doing.
+
+                   ffmpeg -cpuflags -sse+mmx ...
+                   ffmpeg -cpuflags mmx ...
+                   ffmpeg -cpuflags 0 ...
+
+           Possible flags for this option are:
+
+           xx8866
+               mmmmxx
+               mmmmxxeexxtt
+               ssssee
+               ssssee22
+               ssssee22ssllooww
+               ssssee33
+               ssssee33ssllooww
+               ssssssee33
+               aattoomm
+               ssssee44..11
+               ssssee44..22
+               aavvxx
+               xxoopp
+               ffmmaa44
+               33ddnnooww
+               33ddnnoowweexxtt
+               ccmmoovv
+           AARRMM
+               aarrmmvv55ttee
+               aarrmmvv66
+               aarrmmvv66tt22
+               vvffpp
+               vvffppvv33
+               nneeoonn
+           PPoowweerrPPCC
+               aallttiivveecc
+           SSppeecciiffiicc PPrroocceessssoorrss
+               ppeennttiiuumm22
+               ppeennttiiuumm33
+               ppeennttiiuumm44
+               kk66
+               kk6622
+               aatthhlloonn
+               aatthhlloonnxxpp
+               kk88
+       --ooppeennccll__bbeenncchh
+           Benchmark all available OpenCL devices and show the results. This
+           option is only available when FFmpeg has been compiled with
+           "--enable-opencl".
+
+       --ooppeennccll__ooppttiioonnss ooppttiioonnss ((_g_l_o_b_a_l))
+           Set OpenCL environment options. This option is only available when
+           FFmpeg has been compiled with "--enable-opencl".
+
+           _o_p_t_i_o_n_s must be a list of _k_e_y=_v_a_l_u_e option pairs separated by ':'.
+           See the ``OpenCL Options'' section in the ffmpeg-utils manual for
+           the list of supported options.
+
+   AAVVOOppttiioonnss
+       These options are provided directly by the libavformat, libavdevice and
+       libavcodec libraries. To see the list of available AVOptions, use the
+       --hheellpp option. They are separated into two categories:
+
+       ggeenneerriicc
+           These options can be set for any container, codec or device.
+           Generic options are listed under AVFormatContext options for
+           containers/devices and under AVCodecContext options for codecs.
+
+       pprriivvaattee
+           These options are specific to the given container, device or codec.
+           Private options are listed under their corresponding
+           containers/devices/codecs.
+
+       For example to write an ID3v2.3 header instead of a default ID3v2.4 to
+       an MP3 file, use the iidd33vv22__vveerrssiioonn private option of the MP3 muxer:
+
+               ffmpeg -i input.flac -id3v2_version 3 out.mp3
+
+       All codec AVOptions are per-stream, and thus a stream specifier should
+       be attached to them.
+
+       Note: the --nnooooppttiioonn syntax cannot be used for boolean AVOptions, use
+       --ooppttiioonn 00/--ooppttiioonn 11.
+
+       Note: the old undocumented way of specifying per-stream AVOptions by
+       prepending v/a/s to the options name is now obsolete and will be
+       removed soon.
+
+   MMaaiinn ooppttiioonnss
+       --ff _f_m_t ((_i_n_p_u_t_/_o_u_t_p_u_t))
+           Force input or output file format. The format is normally auto
+           detected for input files and guessed from the file extension for
+           output files, so this option is not needed in most cases.
+
+       --ii _f_i_l_e_n_a_m_e ((_i_n_p_u_t))
+           input file name
+
+       --yy ((_g_l_o_b_a_l))
+           Overwrite output files without asking.
+
+       --nn ((_g_l_o_b_a_l))
+           Do not overwrite output files, and exit immediately if a specified
+           output file already exists.
+
+       --cc[[::_s_t_r_e_a_m___s_p_e_c_i_f_i_e_r]] _c_o_d_e_c ((_i_n_p_u_t_/_o_u_t_p_u_t_,_p_e_r_-_s_t_r_e_a_m))
+       --ccooddeecc[[::_s_t_r_e_a_m___s_p_e_c_i_f_i_e_r]] _c_o_d_e_c ((_i_n_p_u_t_/_o_u_t_p_u_t_,_p_e_r_-_s_t_r_e_a_m))
+           Select an encoder (when used before an output file) or a decoder
+           (when used before an input file) for one or more streams. _c_o_d_e_c is
+           the name of a decoder/encoder or a special value "copy" (output
+           only) to indicate that the stream is not to be re-encoded.
+
+           For example
+
+                   ffmpeg -i INPUT -map 0 -c:v libx264 -c:a copy OUTPUT
+
+           encodes all video streams with libx264 and copies all audio
+           streams.
+
+           For each stream, the last matching "c" option is applied, so
+
+                   ffmpeg -i INPUT -map 0 -c copy -c:v:1 libx264 -c:a:137 libvorbis OUTPUT
+
+           will copy all the streams except the second video, which will be
+           encoded with libx264, and the 138th audio, which will be encoded
+           with libvorbis.
+
+       --tt _d_u_r_a_t_i_o_n ((_i_n_p_u_t_/_o_u_t_p_u_t))
+           When used as an input option (before "-i"), limit the _d_u_r_a_t_i_o_n of
+           data read from the input file.
+
+           When used as an output option (before an output filename), stop
+           writing the output after its duration reaches _d_u_r_a_t_i_o_n.
+
+           _d_u_r_a_t_i_o_n may be a number in seconds, or in "hh:mm:ss[.xxx]" form.
+
+           -to and -t are mutually exclusive and -t has priority.
+
+       --ttoo _p_o_s_i_t_i_o_n ((_o_u_t_p_u_t))
+           Stop writing the output at _p_o_s_i_t_i_o_n.  _p_o_s_i_t_i_o_n may be a number in
+           seconds, or in "hh:mm:ss[.xxx]" form.
+
+           -to and -t are mutually exclusive and -t has priority.
+
+       --ffss _l_i_m_i_t___s_i_z_e ((_o_u_t_p_u_t))
+           Set the file size limit, expressed in bytes.
+
+       --ssss _p_o_s_i_t_i_o_n ((_i_n_p_u_t_/_o_u_t_p_u_t))
+           When used as an input option (before "-i"), seeks in this input
+           file to _p_o_s_i_t_i_o_n. Note the in most formats it is not possible to
+           seek exactly, so ffffmmppeegg will seek to the closest seek point before
+           _p_o_s_i_t_i_o_n.  When transcoding and --aaccccuurraattee__sseeeekk is enabled (the
+           default), this extra segment between the seek point and _p_o_s_i_t_i_o_n
+           will be decoded and discarded. When doing stream copy or when
+           --nnooaaccccuurraattee__sseeeekk is used, it will be preserved.
+
+           When used as an output option (before an output filename), decodes
+           but discards input until the timestamps reach _p_o_s_i_t_i_o_n.
+
+           _p_o_s_i_t_i_o_n may be either in seconds or in "hh:mm:ss[.xxx]" form.
+
+       --iittssooffffsseett _o_f_f_s_e_t ((_i_n_p_u_t))
+           Set the input time offset.
+
+           _o_f_f_s_e_t must be a time duration specification, see tthhee TTiimmee dduurraattiioonn
+           sseeccttiioonn iinn tthhee _ff_ff_mm_pp_ee_gg_--_uu_tt_ii_ll_ss((11)) mmaannuuaall.
+
+           The offset is added to the timestamps of the input files.
+           Specifying a positive offset means that the corresponding streams
+           are delayed by the time duration specified in _o_f_f_s_e_t.
+
+       --ttiimmeessttaammpp _d_a_t_e ((_o_u_t_p_u_t))
+           Set the recording timestamp in the container.
+
+           _d_a_t_e must be a time duration specification, see tthhee DDaattee sseeccttiioonn iinn
+           tthhee _ff_ff_mm_pp_ee_gg_--_uu_tt_ii_ll_ss((11)) mmaannuuaall.
+
+       --mmeettaaddaattaa[[::mmeettaaddaattaa__ssppeecciiffiieerr]] _k_e_y==_v_a_l_u_e ((_o_u_t_p_u_t_,_p_e_r_-_m_e_t_a_d_a_t_a))
+           Set a metadata key/value pair.
+
+           An optional _m_e_t_a_d_a_t_a___s_p_e_c_i_f_i_e_r may be given to set metadata on
+           streams or chapters. See "-map_metadata" documentation for details.
+
+           This option overrides metadata set with "-map_metadata". It is also
+           possible to delete metadata by using an empty value.
+
+           For example, for setting the title in the output file:
+
+                   ffmpeg -i in.avi -metadata title="my title" out.flv
+
+           To set the language of the first audio stream:
+
+                   ffmpeg -i INPUT -metadata:s:a:0 language=eng OUTPUT
+
+       --ttaarrggeett _t_y_p_e ((_o_u_t_p_u_t))
+           Specify target file type ("vcd", "svcd", "dvd", "dv", "dv50"). _t_y_p_e
+           may be prefixed with "pal-", "ntsc-" or "film-" to use the
+           corresponding standard. All the format options (bitrate, codecs,
+           buffer sizes) are then set automatically. You can just type:
+
+                   ffmpeg -i myfile.avi -target vcd /tmp/vcd.mpg
+
+           Nevertheless you can specify additional options as long as you know
+           they do not conflict with the standard, as in:
+
+                   ffmpeg -i myfile.avi -target vcd -bf 2 /tmp/vcd.mpg
+
+       --ddffrraammeess _n_u_m_b_e_r ((_o_u_t_p_u_t))
+           Set the number of data frames to output. This is an alias for
+           "-frames:d".
+
+       --ffrraammeess[[::_s_t_r_e_a_m___s_p_e_c_i_f_i_e_r]] _f_r_a_m_e_c_o_u_n_t ((_o_u_t_p_u_t_,_p_e_r_-_s_t_r_e_a_m))
+           Stop writing to the stream after _f_r_a_m_e_c_o_u_n_t frames.
+
+       --qq[[::_s_t_r_e_a_m___s_p_e_c_i_f_i_e_r]] _q ((_o_u_t_p_u_t_,_p_e_r_-_s_t_r_e_a_m))
+       --qqssccaallee[[::_s_t_r_e_a_m___s_p_e_c_i_f_i_e_r]] _q ((_o_u_t_p_u_t_,_p_e_r_-_s_t_r_e_a_m))
+           Use fixed quality scale (VBR). The meaning of _q/_q_s_c_a_l_e is codec-
+           dependent.  If _q_s_c_a_l_e is used without a _s_t_r_e_a_m___s_p_e_c_i_f_i_e_r then it
+           applies only to the video stream, this is to maintain compatibility
+           with previous behavior and as specifying the same codec specific
+           value to 2 different codecs that is audio and video generally is
+           not what is intended when no stream_specifier is used.
+
+       --ffiilltteerr[[::_s_t_r_e_a_m___s_p_e_c_i_f_i_e_r]] _f_i_l_t_e_r_g_r_a_p_h ((_o_u_t_p_u_t_,_p_e_r_-_s_t_r_e_a_m))
+           Create the filtergraph specified by _f_i_l_t_e_r_g_r_a_p_h and use it to
+           filter the stream.
+
+           _f_i_l_t_e_r_g_r_a_p_h is a description of the filtergraph to apply to the
+           stream, and must have a single input and a single output of the
+           same type of the stream. In the filtergraph, the input is
+           associated to the label "in", and the output to the label "out".
+           See the ffmpeg-filters manual for more information about the
+           filtergraph syntax.
+
+           See the --ffiilltteerr__ccoommpplleexx ooppttiioonn if you want to create filtergraphs
+           with multiple inputs and/or outputs.
+
+       --ffiilltteerr__ssccrriipptt[[::_s_t_r_e_a_m___s_p_e_c_i_f_i_e_r]] _f_i_l_e_n_a_m_e ((_o_u_t_p_u_t_,_p_e_r_-_s_t_r_e_a_m))
+           This option is similar to --ffiilltteerr, the only difference is that its
+           argument is the name of the file from which a filtergraph
+           description is to be read.
+
+       --pprree[[::_s_t_r_e_a_m___s_p_e_c_i_f_i_e_r]] _p_r_e_s_e_t___n_a_m_e ((_o_u_t_p_u_t_,_p_e_r_-_s_t_r_e_a_m))
+           Specify the preset for matching stream(s).
+
+       --ssttaattss ((_g_l_o_b_a_l))
+           Print encoding progress/statistics. It is on by default, to
+           explicitly disable it you need to specify "-nostats".
+
+       --pprrooggrreessss _u_r_l ((_g_l_o_b_a_l))
+           Send program-friendly progress information to _u_r_l.
+
+           Progress information is written approximately every second and at
+           the end of the encoding process. It is made of "_k_e_y=_v_a_l_u_e" lines.
+           _k_e_y consists of only alphanumeric characters. The last key of a
+           sequence of progress information is always "progress".
+
+       --ssttddiinn
+           Enable interaction on standard input. On by default unless standard
+           input is used as an input. To explicitly disable interaction you
+           need to specify "-nostdin".
+
+           Disabling interaction on standard input is useful, for example, if
+           ffmpeg is in the background process group. Roughly the same result
+           can be achieved with "ffmpeg ... < /dev/null" but it requires a
+           shell.
+
+       --ddeebbuugg__ttss ((_g_l_o_b_a_l))
+           Print timestamp information. It is off by default. This option is
+           mostly useful for testing and debugging purposes, and the output
+           format may change from one version to another, so it should not be
+           employed by portable scripts.
+
+           See also the option "-fdebug ts".
+
+       --aattttaacchh _f_i_l_e_n_a_m_e ((_o_u_t_p_u_t))
+           Add an attachment to the output file. This is supported by a few
+           formats like Matroska for e.g. fonts used in rendering subtitles.
+           Attachments are implemented as a specific type of stream, so this
+           option will add a new stream to the file. It is then possible to
+           use per-stream options on this stream in the usual way. Attachment
+           streams created with this option will be created after all the
+           other streams (i.e. those created with "-map" or automatic
+           mappings).
+
+           Note that for Matroska you also have to set the mimetype metadata
+           tag:
+
+                   ffmpeg -i INPUT -attach DejaVuSans.ttf -metadata:s:2 mimetype=application/x-truetype-font out.mkv
+
+           (assuming that the attachment stream will be third in the output
+           file).
+
+       --dduummpp__aattttaacchhmmeenntt[[::_s_t_r_e_a_m___s_p_e_c_i_f_i_e_r]] _f_i_l_e_n_a_m_e ((_i_n_p_u_t_,_p_e_r_-_s_t_r_e_a_m))
+           Extract the matching attachment stream into a file named _f_i_l_e_n_a_m_e.
+           If _f_i_l_e_n_a_m_e is empty, then the value of the "filename" metadata tag
+           will be used.
+
+           E.g. to extract the first attachment to a file named 'out.ttf':
+
+                   ffmpeg -dump_attachment:t:0 out.ttf -i INPUT
+
+           To extract all attachments to files determined by the "filename"
+           tag:
+
+                   ffmpeg -dump_attachment:t "" -i INPUT
+
+           Technical note -- attachments are implemented as codec extradata,
+           so this option can actually be used to extract extradata from any
+           stream, not just attachments.
+
+   VViiddeeoo OOppttiioonnss
+       --vvffrraammeess _n_u_m_b_e_r ((_o_u_t_p_u_t))
+           Set the number of video frames to output. This is an alias for
+           "-frames:v".
+
+       --rr[[::_s_t_r_e_a_m___s_p_e_c_i_f_i_e_r]] _f_p_s ((_i_n_p_u_t_/_o_u_t_p_u_t_,_p_e_r_-_s_t_r_e_a_m))
+           Set frame rate (Hz value, fraction or abbreviation).
+
+           As an input option, ignore any timestamps stored in the file and
+           instead generate timestamps assuming constant frame rate _f_p_s.  This
+           is not the same as the --ffrraammeerraattee option used for some input
+           formats like image2 or v4l2 (it used to be the same in older
+           versions of FFmpeg).  If in doubt use --ffrraammeerraattee instead of the
+           input option --rr.
+
+           As an output option, duplicate or drop input frames to achieve
+           constant output frame rate _f_p_s.
+
+       --ss[[::_s_t_r_e_a_m___s_p_e_c_i_f_i_e_r]] _s_i_z_e ((_i_n_p_u_t_/_o_u_t_p_u_t_,_p_e_r_-_s_t_r_e_a_m))
+           Set frame size.
+
+           As an input option, this is a shortcut for the vviiddeeoo__ssiizzee private
+           option, recognized by some demuxers for which the frame size is
+           either not stored in the file or is configurable -- e.g. raw video
+           or video grabbers.
+
+           As an output option, this inserts the "scale" video filter to the
+           _e_n_d of the corresponding filtergraph. Please use the "scale" filter
+           directly to insert it at the beginning or some other place.
+
+           The format is wwxxhh (default - same as source).
+
+       --aassppeecctt[[::_s_t_r_e_a_m___s_p_e_c_i_f_i_e_r]] _a_s_p_e_c_t ((_o_u_t_p_u_t_,_p_e_r_-_s_t_r_e_a_m))
+           Set the video display aspect ratio specified by _a_s_p_e_c_t.
+
+           _a_s_p_e_c_t can be a floating point number string, or a string of the
+           form _n_u_m:_d_e_n, where _n_u_m and _d_e_n are the numerator and denominator
+           of the aspect ratio. For example "4:3", "16:9", "1.3333", and
+           "1.7777" are valid argument values.
+
+           If used together with --vvccooddeecc ccooppyy, it will affect the aspect ratio
+           stored at container level, but not the aspect ratio stored in
+           encoded frames, if it exists.
+
+       --vvnn ((_o_u_t_p_u_t))
+           Disable video recording.
+
+       --vvccooddeecc _c_o_d_e_c ((_o_u_t_p_u_t))
+           Set the video codec. This is an alias for "-codec:v".
+
+       --ppaassss[[::_s_t_r_e_a_m___s_p_e_c_i_f_i_e_r]] _n ((_o_u_t_p_u_t_,_p_e_r_-_s_t_r_e_a_m))
+           Select the pass number (1 or 2). It is used to do two-pass video
+           encoding. The statistics of the video are recorded in the first
+           pass into a log file (see also the option -passlogfile), and in the
+           second pass that log file is used to generate the video at the
+           exact requested bitrate.  On pass 1, you may just deactivate audio
+           and set output to null, examples for Windows and Unix:
+
+                   ffmpeg -i foo.mov -c:v libxvid -pass 1 -an -f rawvideo -y NUL
+                   ffmpeg -i foo.mov -c:v libxvid -pass 1 -an -f rawvideo -y /dev/null
+
+       --ppaassssllooggffiillee[[::_s_t_r_e_a_m___s_p_e_c_i_f_i_e_r]] _p_r_e_f_i_x ((_o_u_t_p_u_t_,_p_e_r_-_s_t_r_e_a_m))
+           Set two-pass log file name prefix to _p_r_e_f_i_x, the default file name
+           prefix is ``ffmpeg2pass''. The complete file name will be
+           _P_R_E_F_I_X_-_N_._l_o_g, where N is a number specific to the output stream
+
+       --vvff _f_i_l_t_e_r_g_r_a_p_h ((_o_u_t_p_u_t))
+           Create the filtergraph specified by _f_i_l_t_e_r_g_r_a_p_h and use it to
+           filter the stream.
+
+           This is an alias for "-filter:v", see the --ffiilltteerr ooppttiioonn.
+
+   AAddvvaanncceedd VViiddeeoo ooppttiioonnss
+       --ppiixx__ffmmtt[[::_s_t_r_e_a_m___s_p_e_c_i_f_i_e_r]] _f_o_r_m_a_t ((_i_n_p_u_t_/_o_u_t_p_u_t_,_p_e_r_-_s_t_r_e_a_m))
+           Set pixel format. Use "-pix_fmts" to show all the supported pixel
+           formats.  If the selected pixel format can not be selected, ffmpeg
+           will print a warning and select the best pixel format supported by
+           the encoder.  If _p_i_x___f_m_t is prefixed by a "+", ffmpeg will exit
+           with an error if the requested pixel format can not be selected,
+           and automatic conversions inside filtergraphs are disabled.  If
+           _p_i_x___f_m_t is a single "+", ffmpeg selects the same pixel format as
+           the input (or graph output) and automatic conversions are disabled.
+
+       --sswwss__ffllaaggss _f_l_a_g_s ((_i_n_p_u_t_/_o_u_t_p_u_t))
+           Set SwScaler flags.
+
+       --vvddtt _n
+           Discard threshold.
+
+       --rrcc__oovveerrrriiddee[[::_s_t_r_e_a_m___s_p_e_c_i_f_i_e_r]] _o_v_e_r_r_i_d_e ((_o_u_t_p_u_t_,_p_e_r_-_s_t_r_e_a_m))
+           Rate control override for specific intervals, formatted as
+           "int,int,int" list separated with slashes. Two first values are the
+           beginning and end frame numbers, last one is quantizer to use if
+           positive, or quality factor if negative.
+
+       --iillmmee
+           Force interlacing support in encoder (MPEG-2 and MPEG-4 only).  Use
+           this option if your input file is interlaced and you want to keep
+           the interlaced format for minimum losses.  The alternative is to
+           deinterlace the input stream with --ddeeiinntteerrllaaccee, but deinterlacing
+           introduces losses.
+
+       --ppssnnrr
+           Calculate PSNR of compressed frames.
+
+       --vvssttaattss
+           Dump video coding statistics to _v_s_t_a_t_s___H_H_M_M_S_S_._l_o_g.
+
+       --vvssttaattss__ffiillee _f_i_l_e
+           Dump video coding statistics to _f_i_l_e.
+
+       --ttoopp[[::_s_t_r_e_a_m___s_p_e_c_i_f_i_e_r]] _n ((_o_u_t_p_u_t_,_p_e_r_-_s_t_r_e_a_m))
+           top=1/bottom=0/auto=-1 field first
+
+       --ddcc _p_r_e_c_i_s_i_o_n
+           Intra_dc_precision.
+
+       --vvttaagg _f_o_u_r_c_c_/_t_a_g ((_o_u_t_p_u_t))
+           Force video tag/fourcc. This is an alias for "-tag:v".
+
+       --qqpphhiisstt ((_g_l_o_b_a_l))
+           Show QP histogram
+
+       --vvbbssff _b_i_t_s_t_r_e_a_m___f_i_l_t_e_r
+           Deprecated see -bsf
+
+       --ffoorrccee__kkeeyy__ffrraammeess[[::_s_t_r_e_a_m___s_p_e_c_i_f_i_e_r]] _t_i_m_e[[,,_t_i_m_e......]] ((_o_u_t_p_u_t_,_p_e_r_-_s_t_r_e_a_m))
+       --ffoorrccee__kkeeyy__ffrraammeess[[::_s_t_r_e_a_m___s_p_e_c_i_f_i_e_r]] eexxpprr::_e_x_p_r ((_o_u_t_p_u_t_,_p_e_r_-_s_t_r_e_a_m))
+           Force key frames at the specified timestamps, more precisely at the
+           first frames after each specified time.
+
+           If the argument is prefixed with "expr:", the string _e_x_p_r is
+           interpreted like an expression and is evaluated for each frame. A
+           key frame is forced in case the evaluation is non-zero.
+
+           If one of the times is ""chapters"[_d_e_l_t_a]", it is expanded into the
+           time of the beginning of all chapters in the file, shifted by
+           _d_e_l_t_a, expressed as a time in seconds.  This option can be useful
+           to ensure that a seek point is present at a chapter mark or any
+           other designated place in the output file.
+
+           For example, to insert a key frame at 5 minutes, plus key frames
+           0.1 second before the beginning of every chapter:
+
+                   -force_key_frames 0:05:00,chapters-0.1
+
+           The expression in _e_x_p_r can contain the following constants:
+
+           nn   the number of current processed frame, starting from 0
+
+           nn__ffoorrcceedd
+               the number of forced frames
+
+           pprreevv__ffoorrcceedd__nn
+               the number of the previous forced frame, it is "NAN" when no
+               keyframe was forced yet
+
+           pprreevv__ffoorrcceedd__tt
+               the time of the previous forced frame, it is "NAN" when no
+               keyframe was forced yet
+
+           tt   the time of the current processed frame
+
+           For example to force a key frame every 5 seconds, you can specify:
+
+                   -force_key_frames expr:gte(t,n_forced*5)
+
+           To force a key frame 5 seconds after the time of the last forced
+           one, starting from second 13:
+
+                   -force_key_frames expr:if(isnan(prev_forced_t),gte(t,13),gte(t,prev_forced_t+5))
+
+           Note that forcing too many keyframes is very harmful for the
+           lookahead algorithms of certain encoders: using fixed-GOP options
+           or similar would be more efficient.
+
+       --ccooppyyiinnkkff[[::_s_t_r_e_a_m___s_p_e_c_i_f_i_e_r]] ((_o_u_t_p_u_t_,_p_e_r_-_s_t_r_e_a_m))
+           When doing stream copy, copy also non-key frames found at the
+           beginning.
+
+       --hhwwaacccceell[[::_s_t_r_e_a_m___s_p_e_c_i_f_i_e_r]] _h_w_a_c_c_e_l ((_i_n_p_u_t_,_p_e_r_-_s_t_r_e_a_m))
+           Use hardware acceleration to decode the matching stream(s). The
+           allowed values of _h_w_a_c_c_e_l are:
+
+           nnoonnee
+               Do not use any hardware acceleration (the default).
+
+           aauuttoo
+               Automatically select the hardware acceleration method.
+
+           vvddaa Use Apple VDA hardware acceleration.
+
+           vvddppaauu
+               Use VDPAU (Video Decode and Presentation API for Unix) hardware
+               acceleration.
+
+           ddxxvvaa22
+               Use DXVA2 (DirectX Video Acceleration) hardware acceleration.
+
+           This option has no effect if the selected hwaccel is not available
+           or not supported by the chosen decoder.
+
+           Note that most acceleration methods are intended for playback and
+           will not be faster than software decoding on modern CPUs.
+           Additionally, ffffmmppeegg will usually need to copy the decoded frames
+           from the GPU memory into the system memory, resulting in further
+           performance loss. This option is thus mainly useful for testing.
+
+       --hhwwaacccceell__ddeevviiccee[[::_s_t_r_e_a_m___s_p_e_c_i_f_i_e_r]] _h_w_a_c_c_e_l___d_e_v_i_c_e ((_i_n_p_u_t_,_p_e_r_-_s_t_r_e_a_m))
+           Select a device to use for hardware acceleration.
+
+           This option only makes sense when the --hhwwaacccceell option is also
+           specified. Its exact meaning depends on the specific hardware
+           acceleration method chosen.
+
+           vvddppaauu
+               For VDPAU, this option specifies the X11 display/screen to use.
+               If this option is not specified, the value of the _D_I_S_P_L_A_Y
+               environment variable is used
+
+           ddxxvvaa22
+               For DXVA2, this option should contain the number of the display
+               adapter to use.  If this option is not specified, the default
+               adapter is used.
+
+   AAuuddiioo OOppttiioonnss
+       --aaffrraammeess _n_u_m_b_e_r ((_o_u_t_p_u_t))
+           Set the number of audio frames to output. This is an alias for
+           "-frames:a".
+
+       --aarr[[::_s_t_r_e_a_m___s_p_e_c_i_f_i_e_r]] _f_r_e_q ((_i_n_p_u_t_/_o_u_t_p_u_t_,_p_e_r_-_s_t_r_e_a_m))
+           Set the audio sampling frequency. For output streams it is set by
+           default to the frequency of the corresponding input stream. For
+           input streams this option only makes sense for audio grabbing
+           devices and raw demuxers and is mapped to the corresponding demuxer
+           options.
+
+       --aaqq _q ((_o_u_t_p_u_t))
+           Set the audio quality (codec-specific, VBR). This is an alias for
+           -q:a.
+
+       --aacc[[::_s_t_r_e_a_m___s_p_e_c_i_f_i_e_r]] _c_h_a_n_n_e_l_s ((_i_n_p_u_t_/_o_u_t_p_u_t_,_p_e_r_-_s_t_r_e_a_m))
+           Set the number of audio channels. For output streams it is set by
+           default to the number of input audio channels. For input streams
+           this option only makes sense for audio grabbing devices and raw
+           demuxers and is mapped to the corresponding demuxer options.
+
+       --aann ((_o_u_t_p_u_t))
+           Disable audio recording.
+
+       --aaccooddeecc _c_o_d_e_c ((_i_n_p_u_t_/_o_u_t_p_u_t))
+           Set the audio codec. This is an alias for "-codec:a".
+
+       --ssaammppllee__ffmmtt[[::_s_t_r_e_a_m___s_p_e_c_i_f_i_e_r]] _s_a_m_p_l_e___f_m_t ((_o_u_t_p_u_t_,_p_e_r_-_s_t_r_e_a_m))
+           Set the audio sample format. Use "-sample_fmts" to get a list of
+           supported sample formats.
+
+       --aaff _f_i_l_t_e_r_g_r_a_p_h ((_o_u_t_p_u_t))
+           Create the filtergraph specified by _f_i_l_t_e_r_g_r_a_p_h and use it to
+           filter the stream.
+
+           This is an alias for "-filter:a", see the --ffiilltteerr ooppttiioonn.
+
+   AAddvvaanncceedd AAuuddiioo ooppttiioonnss
+       --aattaagg _f_o_u_r_c_c_/_t_a_g ((_o_u_t_p_u_t))
+           Force audio tag/fourcc. This is an alias for "-tag:a".
+
+       --aabbssff _b_i_t_s_t_r_e_a_m___f_i_l_t_e_r
+           Deprecated, see -bsf
+
+       --gguueessss__llaayyoouutt__mmaaxx _c_h_a_n_n_e_l_s ((_i_n_p_u_t_,_p_e_r_-_s_t_r_e_a_m))
+           If some input channel layout is not known, try to guess only if it
+           corresponds to at most the specified number of channels. For
+           example, 2 tells to ffffmmppeegg to recognize 1 channel as mono and 2
+           channels as stereo but not 6 channels as 5.1. The default is to
+           always try to guess. Use 0 to disable all guessing.
+
+   SSuubbttiittllee ooppttiioonnss
+       --ssccooddeecc _c_o_d_e_c ((_i_n_p_u_t_/_o_u_t_p_u_t))
+           Set the subtitle codec. This is an alias for "-codec:s".
+
+       --ssnn ((_o_u_t_p_u_t))
+           Disable subtitle recording.
+
+       --ssbbssff _b_i_t_s_t_r_e_a_m___f_i_l_t_e_r
+           Deprecated, see -bsf
+
+   AAddvvaanncceedd SSuubbttiittllee ooppttiioonnss
+       --ffiixx__ssuubb__dduurraattiioonn
+           Fix subtitles durations. For each subtitle, wait for the next
+           packet in the same stream and adjust the duration of the first to
+           avoid overlap. This is necessary with some subtitles codecs,
+           especially DVB subtitles, because the duration in the original
+           packet is only a rough estimate and the end is actually marked by
+           an empty subtitle frame. Failing to use this option when necessary
+           can result in exaggerated durations or muxing failures due to non-
+           monotonic timestamps.
+
+           Note that this option will delay the output of all data until the
+           next subtitle packet is decoded: it may increase memory consumption
+           and latency a lot.
+
+       --ccaannvvaass__ssiizzee _s_i_z_e
+           Set the size of the canvas used to render subtitles.
+
+   AAddvvaanncceedd ooppttiioonnss
+       --mmaapp
+       [[--]]_i_n_p_u_t___f_i_l_e___i_d[[::_s_t_r_e_a_m___s_p_e_c_i_f_i_e_r]][[,,_s_y_n_c___f_i_l_e___i_d[[::_s_t_r_e_a_m___s_p_e_c_i_f_i_e_r]]]] ||
+       _[_l_i_n_k_l_a_b_e_l_] ((_o_u_t_p_u_t))
+           Designate one or more input streams as a source for the output
+           file. Each input stream is identified by the input file index
+           _i_n_p_u_t___f_i_l_e___i_d and the input stream index _i_n_p_u_t___s_t_r_e_a_m___i_d within the
+           input file. Both indices start at 0. If specified,
+           _s_y_n_c___f_i_l_e___i_d:_s_t_r_e_a_m___s_p_e_c_i_f_i_e_r sets which input stream is used as a
+           presentation sync reference.
+
+           The first "-map" option on the command line specifies the source
+           for output stream 0, the second "-map" option specifies the source
+           for output stream 1, etc.
+
+           A "-" character before the stream identifier creates a "negative"
+           mapping.  It disables matching streams from already created
+           mappings.
+
+           An alternative _[_l_i_n_k_l_a_b_e_l_] form will map outputs from complex
+           filter graphs (see the --ffiilltteerr__ccoommpplleexx option) to the output file.
+           _l_i_n_k_l_a_b_e_l must correspond to a defined output link label in the
+           graph.
+
+           For example, to map ALL streams from the first input file to output
+
+                   ffmpeg -i INPUT -map 0 output
+
+           For example, if you have two audio streams in the first input file,
+           these streams are identified by "0:0" and "0:1". You can use "-map"
+           to select which streams to place in an output file. For example:
+
+                   ffmpeg -i INPUT -map 0:1 out.wav
+
+           will map the input stream in _I_N_P_U_T identified by "0:1" to the
+           (single) output stream in _o_u_t_._w_a_v.
+
+           For example, to select the stream with index 2 from input file
+           _a_._m_o_v (specified by the identifier "0:2"), and stream with index 6
+           from input _b_._m_o_v (specified by the identifier "1:6"), and copy them
+           to the output file _o_u_t_._m_o_v:
+
+                   ffmpeg -i a.mov -i b.mov -c copy -map 0:2 -map 1:6 out.mov
+
+           To select all video and the third audio stream from an input file:
+
+                   ffmpeg -i INPUT -map 0:v -map 0:a:2 OUTPUT
+
+           To map all the streams except the second audio, use negative
+           mappings
+
+                   ffmpeg -i INPUT -map 0 -map -0:a:1 OUTPUT
+
+           To pick the English audio stream:
+
+                   ffmpeg -i INPUT -map 0:m:language:eng OUTPUT
+
+           Note that using this option disables the default mappings for this
+           output file.
+
+       --mmaapp__cchhaannnneell
+       [[_i_n_p_u_t___f_i_l_e___i_d.._s_t_r_e_a_m___s_p_e_c_i_f_i_e_r.._c_h_a_n_n_e_l___i_d||--11]][[::_o_u_t_p_u_t___f_i_l_e___i_d.._s_t_r_e_a_m___s_p_e_c_i_f_i_e_r]]
+           Map an audio channel from a given input to an output. If
+           _o_u_t_p_u_t___f_i_l_e___i_d._s_t_r_e_a_m___s_p_e_c_i_f_i_e_r is not set, the audio channel will
+           be mapped on all the audio streams.
+
+           Using "-1" instead of _i_n_p_u_t___f_i_l_e___i_d._s_t_r_e_a_m___s_p_e_c_i_f_i_e_r._c_h_a_n_n_e_l___i_d
+           will map a muted channel.
+
+           For example, assuming _I_N_P_U_T is a stereo audio file, you can switch
+           the two audio channels with the following command:
+
+                   ffmpeg -i INPUT -map_channel 0.0.1 -map_channel 0.0.0 OUTPUT
+
+           If you want to mute the first channel and keep the second:
+
+                   ffmpeg -i INPUT -map_channel -1 -map_channel 0.0.1 OUTPUT
+
+           The order of the "-map_channel" option specifies the order of the
+           channels in the output stream. The output channel layout is guessed
+           from the number of channels mapped (mono if one "-map_channel",
+           stereo if two, etc.). Using "-ac" in combination of "-map_channel"
+           makes the channel gain levels to be updated if input and output
+           channel layouts don't match (for instance two "-map_channel"
+           options and "-ac 6").
+
+           You can also extract each channel of an input to specific outputs;
+           the following command extracts two channels of the _I_N_P_U_T audio
+           stream (file 0, stream 0) to the respective _O_U_T_P_U_T___C_H_0 and
+           _O_U_T_P_U_T___C_H_1 outputs:
+
+                   ffmpeg -i INPUT -map_channel 0.0.0 OUTPUT_CH0 -map_channel 0.0.1 OUTPUT_CH1
+
+           The following example splits the channels of a stereo input into
+           two separate streams, which are put into the same output file:
+
+                   ffmpeg -i stereo.wav -map 0:0 -map 0:0 -map_channel 0.0.0:0.0 -map_channel 0.0.1:0.1 -y out.ogg
+
+           Note that currently each output stream can only contain channels
+           from a single input stream; you can't for example use
+           "-map_channel" to pick multiple input audio channels contained in
+           different streams (from the same or different files) and merge them
+           into a single output stream. It is therefore not currently
+           possible, for example, to turn two separate mono streams into a
+           single stereo stream. However splitting a stereo stream into two
+           single channel mono streams is possible.
+
+           If you need this feature, a possible workaround is to use the
+           _a_m_e_r_g_e filter. For example, if you need to merge a media (here
+           _i_n_p_u_t_._m_k_v) with 2 mono audio streams into one single stereo channel
+           audio stream (and keep the video stream), you can use the following
+           command:
+
+                   ffmpeg -i input.mkv -filter_complex "[0:1] [0:2] amerge" -c:a pcm_s16le -c:v copy output.mkv
+
+       --mmaapp__mmeettaaddaattaa[[::_m_e_t_a_d_a_t_a___s_p_e_c___o_u_t]] _i_n_f_i_l_e[[::_m_e_t_a_d_a_t_a___s_p_e_c___i_n]]
+       ((_o_u_t_p_u_t_,_p_e_r_-_m_e_t_a_d_a_t_a))
+           Set metadata information of the next output file from _i_n_f_i_l_e. Note
+           that those are file indices (zero-based), not filenames.  Optional
+           _m_e_t_a_d_a_t_a___s_p_e_c___i_n_/_o_u_t parameters specify, which metadata to copy.  A
+           metadata specifier can have the following forms:
+
+           _g   global metadata, i.e. metadata that applies to the whole file
+
+           _s[[::_s_t_r_e_a_m___s_p_e_c]]
+               per-stream metadata. _s_t_r_e_a_m___s_p_e_c is a stream specifier as
+               described in the SSttrreeaamm ssppeecciiffiieerrss chapter. In an input
+               metadata specifier, the first matching stream is copied from.
+               In an output metadata specifier, all matching streams are
+               copied to.
+
+           _c::_c_h_a_p_t_e_r___i_n_d_e_x
+               per-chapter metadata. _c_h_a_p_t_e_r___i_n_d_e_x is the zero-based chapter
+               index.
+
+           _p::_p_r_o_g_r_a_m___i_n_d_e_x
+               per-program metadata. _p_r_o_g_r_a_m___i_n_d_e_x is the zero-based program
+               index.
+
+           If metadata specifier is omitted, it defaults to global.
+
+           By default, global metadata is copied from the first input file,
+           per-stream and per-chapter metadata is copied along with
+           streams/chapters. These default mappings are disabled by creating
+           any mapping of the relevant type. A negative file index can be used
+           to create a dummy mapping that just disables automatic copying.
+
+           For example to copy metadata from the first stream of the input
+           file to global metadata of the output file:
+
+                   ffmpeg -i in.ogg -map_metadata 0:s:0 out.mp3
+
+           To do the reverse, i.e. copy global metadata to all audio streams:
+
+                   ffmpeg -i in.mkv -map_metadata:s:a 0:g out.mkv
+
+           Note that simple 0 would work as well in this example, since global
+           metadata is assumed by default.
+
+       --mmaapp__cchhaapptteerrss _i_n_p_u_t___f_i_l_e___i_n_d_e_x ((_o_u_t_p_u_t))
+           Copy chapters from input file with index _i_n_p_u_t___f_i_l_e___i_n_d_e_x to the
+           next output file. If no chapter mapping is specified, then chapters
+           are copied from the first input file with at least one chapter. Use
+           a negative file index to disable any chapter copying.
+
+       --bbeenncchhmmaarrkk ((_g_l_o_b_a_l))
+           Show benchmarking information at the end of an encode.  Shows CPU
+           time used and maximum memory consumption.  Maximum memory
+           consumption is not supported on all systems, it will usually
+           display as 0 if not supported.
+
+       --bbeenncchhmmaarrkk__aallll ((_g_l_o_b_a_l))
+           Show benchmarking information during the encode.  Shows CPU time
+           used in various steps (audio/video encode/decode).
+
+       --ttiimmeelliimmiitt _d_u_r_a_t_i_o_n ((_g_l_o_b_a_l))
+           Exit after ffmpeg has been running for _d_u_r_a_t_i_o_n seconds.
+
+       --dduummpp ((_g_l_o_b_a_l))
+           Dump each input packet to stderr.
+
+       --hheexx ((_g_l_o_b_a_l))
+           When dumping packets, also dump the payload.
+
+       --rree ((_i_n_p_u_t))
+           Read input at native frame rate. Mainly used to simulate a grab
+           device.  or live input stream (e.g. when reading from a file).
+           Should not be used with actual grab devices or live input streams
+           (where it can cause packet loss).  By default ffffmmppeegg attempts to
+           read the input(s) as fast as possible.  This option will slow down
+           the reading of the input(s) to the native frame rate of the
+           input(s). It is useful for real-time output (e.g. live streaming).
+
+       --lloooopp__iinnppuutt
+           Loop over the input stream. Currently it works only for image
+           streams. This option is used for automatic FFserver testing.  This
+           option is deprecated, use -loop 1.
+
+       --lloooopp__oouuttppuutt _n_u_m_b_e_r___o_f___t_i_m_e_s
+           Repeatedly loop output for formats that support looping such as
+           animated GIF (0 will loop the output infinitely).  This option is
+           deprecated, use -loop.
+
+       --vvssyynncc _p_a_r_a_m_e_t_e_r
+           Video sync method.  For compatibility reasons old values can be
+           specified as numbers.  Newly added values will have to be specified
+           as strings always.
+
+           00,, ppaasssstthhrroouugghh
+               Each frame is passed with its timestamp from the demuxer to the
+               muxer.
+
+           11,, ccffrr
+               Frames will be duplicated and dropped to achieve exactly the
+               requested constant frame rate.
+
+           22,, vvffrr
+               Frames are passed through with their timestamp or dropped so as
+               to prevent 2 frames from having the same timestamp.
+
+           ddrroopp
+               As passthrough but destroys all timestamps, making the muxer
+               generate fresh timestamps based on frame-rate.
+
+           --11,, aauuttoo
+               Chooses between 1 and 2 depending on muxer capabilities. This
+               is the default method.
+
+           Note that the timestamps may be further modified by the muxer,
+           after this.  For example, in the case that the format option
+           aavvooiidd__nneeggaattiivvee__ttss is enabled.
+
+           With -map you can select from which stream the timestamps should be
+           taken. You can leave either video or audio unchanged and sync the
+           remaining stream(s) to the unchanged one.
+
+       --aassyynncc _s_a_m_p_l_e_s___p_e_r___s_e_c_o_n_d
+           Audio sync method. "Stretches/squeezes" the audio stream to match
+           the timestamps, the parameter is the maximum samples per second by
+           which the audio is changed.  -async 1 is a special case where only
+           the start of the audio stream is corrected without any later
+           correction.
+
+           Note that the timestamps may be further modified by the muxer,
+           after this.  For example, in the case that the format option
+           aavvooiidd__nneeggaattiivvee__ttss is enabled.
+
+           This option has been deprecated. Use the "aresample" audio filter
+           instead.
+
+       --ccooppyyttss
+           Do not process input timestamps, but keep their values without
+           trying to sanitize them. In particular, do not remove the initial
+           start time offset value.
+
+           Note that, depending on the vvssyynncc option or on specific muxer
+           processing (e.g. in case the format option aavvooiidd__nneeggaattiivvee__ttss is
+           enabled) the output timestamps may mismatch with the input
+           timestamps even when this option is selected.
+
+       --ssttaarrtt__aatt__zzeerroo
+           When used with ccooppyyttss, shift input timestamps so they start at
+           zero.
+
+           This means that using e.g. "-ss 50" will make output timestamps
+           start at 50 seconds, regardless of what timestamp the input file
+           started at.
+
+       --ccooppyyttbb _m_o_d_e
+           Specify how to set the encoder timebase when stream copying.  _m_o_d_e
+           is an integer numeric value, and can assume one of the following
+           values:
+
+           11   Use the demuxer timebase.
+
+               The time base is copied to the output encoder from the
+               corresponding input demuxer. This is sometimes required to
+               avoid non monotonically increasing timestamps when copying
+               video streams with variable frame rate.
+
+           00   Use the decoder timebase.
+
+               The time base is copied to the output encoder from the
+               corresponding input decoder.
+
+           --11  Try to make the choice automatically, in order to generate a
+               sane output.
+
+           Default value is -1.
+
+       --sshhoorrtteesstt ((_o_u_t_p_u_t))
+           Finish encoding when the shortest input stream ends.
+
+       --ddttss__ddeellttaa__tthhrreesshhoolldd
+           Timestamp discontinuity delta threshold.
+
+       --mmuuxxddeellaayy _s_e_c_o_n_d_s ((_i_n_p_u_t))
+           Set the maximum demux-decode delay.
+
+       --mmuuxxpprreellooaadd _s_e_c_o_n_d_s ((_i_n_p_u_t))
+           Set the initial demux-decode delay.
+
+       --ssttrreeaammiidd _o_u_t_p_u_t_-_s_t_r_e_a_m_-_i_n_d_e_x::_n_e_w_-_v_a_l_u_e ((_o_u_t_p_u_t))
+           Assign a new stream-id value to an output stream. This option
+           should be specified prior to the output filename to which it
+           applies.  For the situation where multiple output files exist, a
+           streamid may be reassigned to a different value.
+
+           For example, to set the stream 0 PID to 33 and the stream 1 PID to
+           36 for an output mpegts file:
+
+                   ffmpeg -i infile -streamid 0:33 -streamid 1:36 out.ts
+
+       --bbssff[[::_s_t_r_e_a_m___s_p_e_c_i_f_i_e_r]] _b_i_t_s_t_r_e_a_m___f_i_l_t_e_r_s ((_o_u_t_p_u_t_,_p_e_r_-_s_t_r_e_a_m))
+           Set bitstream filters for matching streams. _b_i_t_s_t_r_e_a_m___f_i_l_t_e_r_s is a
+           comma-separated list of bitstream filters. Use the "-bsfs" option
+           to get the list of bitstream filters.
+
+                   ffmpeg -i h264.mp4 -c:v copy -bsf:v h264_mp4toannexb -an out.h264
+
+
+                   ffmpeg -i file.mov -an -vn -bsf:s mov2textsub -c:s copy -f rawvideo sub.txt
+
+       --ttaagg[[::_s_t_r_e_a_m___s_p_e_c_i_f_i_e_r]] _c_o_d_e_c___t_a_g ((_i_n_p_u_t_/_o_u_t_p_u_t_,_p_e_r_-_s_t_r_e_a_m))
+           Force a tag/fourcc for matching streams.
+
+       --ttiimmeeccooddee _h_h::_m_m::_s_sSSEEPP_f_f
+           Specify Timecode for writing. _S_E_P is ':' for non drop timecode and
+           ';' (or '.') for drop.
+
+                   ffmpeg -i input.mpg -timecode 01:02:03.04 -r 30000/1001 -s ntsc output.mpg
+
+       --ffiilltteerr__ccoommpplleexx _f_i_l_t_e_r_g_r_a_p_h ((_g_l_o_b_a_l))
+           Define a complex filtergraph, i.e. one with arbitrary number of
+           inputs and/or outputs. For simple graphs -- those with one input
+           and one output of the same type -- see the --ffiilltteerr options.
+           _f_i_l_t_e_r_g_r_a_p_h is a description of the filtergraph, as described in
+           the ``Filtergraph syntax'' section of the ffmpeg-filters manual.
+
+           Input link labels must refer to input streams using the
+           "[file_index:stream_specifier]" syntax (i.e. the same as --mmaapp
+           uses). If _s_t_r_e_a_m___s_p_e_c_i_f_i_e_r matches multiple streams, the first one
+           will be used. An unlabeled input will be connected to the first
+           unused input stream of the matching type.
+
+           Output link labels are referred to with --mmaapp. Unlabeled outputs are
+           added to the first output file.
+
+           Note that with this option it is possible to use only lavfi sources
+           without normal input files.
+
+           For example, to overlay an image over video
+
+                   ffmpeg -i video.mkv -i image.png -filter_complex '[0:v][1:v]overlay[out]' -map
+                   '[out]' out.mkv
+
+           Here "[0:v]" refers to the first video stream in the first input
+           file, which is linked to the first (main) input of the overlay
+           filter. Similarly the first video stream in the second input is
+           linked to the second (overlay) input of overlay.
+
+           Assuming there is only one video stream in each input file, we can
+           omit input labels, so the above is equivalent to
+
+                   ffmpeg -i video.mkv -i image.png -filter_complex 'overlay[out]' -map
+                   '[out]' out.mkv
+
+           Furthermore we can omit the output label and the single output from
+           the filter graph will be added to the output file automatically, so
+           we can simply write
+
+                   ffmpeg -i video.mkv -i image.png -filter_complex 'overlay' out.mkv
+
+           To generate 5 seconds of pure red video using lavfi "color" source:
+
+                   ffmpeg -filter_complex 'color=c=red' -t 5 out.mkv
+
+       --llaavvffii _f_i_l_t_e_r_g_r_a_p_h ((_g_l_o_b_a_l))
+           Define a complex filtergraph, i.e. one with arbitrary number of
+           inputs and/or outputs. Equivalent to --ffiilltteerr__ccoommpplleexx.
+
+       --ffiilltteerr__ccoommpplleexx__ssccrriipptt _f_i_l_e_n_a_m_e ((_g_l_o_b_a_l))
+           This option is similar to --ffiilltteerr__ccoommpplleexx, the only difference is
+           that its argument is the name of the file from which a complex
+           filtergraph description is to be read.
+
+       --aaccccuurraattee__sseeeekk ((_i_n_p_u_t))
+           This option enables or disables accurate seeking in input files
+           with the --ssss option. It is enabled by default, so seeking is
+           accurate when transcoding. Use --nnooaaccccuurraattee__sseeeekk to disable it,
+           which may be useful e.g. when copying some streams and transcoding
+           the others.
+
+       --oovveerrrriiddee__ffffsseerrvveerr ((_g_l_o_b_a_l))
+           Overrides the input specifications from ffffsseerrvveerr. Using this option
+           you can map any input stream to ffffsseerrvveerr and control many aspects
+           of the encoding from ffffmmppeegg. Without this option ffffmmppeegg will
+           transmit to ffffsseerrvveerr what is requested by ffffsseerrvveerr.
+
+           The option is intended for cases where features are needed that
+           cannot be specified to ffffsseerrvveerr but can be to ffffmmppeegg.
+
+       --ddiissccaarrdd ((_i_n_p_u_t))
+           Allows discarding specific streams or frames of streams at the
+           demuxer.  Not all demuxers support this.
+
+           nnoonnee
+               Discard no frame.
+
+           ddeeffaauulltt
+               Default, which discards no frames.
+
+           nnoorreeff
+               Discard all non-reference frames.
+
+           bbiiddiirr
+               Discard all bidirectional frames.
+
+           nnookkeeyy
+               Discard all frames excepts keyframes.
+
+           aallll Discard all frames.
+
+       As a special exception, you can use a bitmap subtitle stream as input:
+       it will be converted into a video with the same size as the largest
+       video in the file, or 720x576 if no video is present. Note that this is
+       an experimental and temporary solution. It will be removed once
+       libavfilter has proper support for subtitles.
+
+       For example, to hardcode subtitles on top of a DVB-T recording stored
+       in MPEG-TS format, delaying the subtitles by 1 second:
+
+               ffmpeg -i input.ts -filter_complex \
+                 '[#0x2ef] setpts=PTS+1/TB [sub] ; [#0x2d0] [sub] overlay' \
+                 -sn -map '#0x2dc' output.mkv
+
+       (0x2d0, 0x2dc and 0x2ef are the MPEG-TS PIDs of respectively the video,
+       audio and subtitles streams; 0:0, 0:3 and 0:7 would have worked too)
+
+   PPrreesseett ffiilleess
+       A preset file contains a sequence of _o_p_t_i_o_n=_v_a_l_u_e pairs, one for each
+       line, specifying a sequence of options which would be awkward to
+       specify on the command line. Lines starting with the hash ('#')
+       character are ignored and are used to provide comments. Check the
+       _p_r_e_s_e_t_s directory in the FFmpeg source tree for examples.
+
+       Preset files are specified with the "vpre", "apre", "spre", and "fpre"
+       options. The "fpre" option takes the filename of the preset instead of
+       a preset name as input and can be used for any kind of codec. For the
+       "vpre", "apre", and "spre" options, the options specified in a preset
+       file are applied to the currently selected codec of the same type as
+       the preset option.
+
+       The argument passed to the "vpre", "apre", and "spre" preset options
+       identifies the preset file to use according to the following rules:
+
+       First ffmpeg searches for a file named _a_r_g.ffpreset in the directories
+       _$_F_F_M_P_E_G___D_A_T_A_D_I_R (if set), and _$_H_O_M_E_/_._f_f_m_p_e_g, and in the datadir defined
+       at configuration time (usually _P_R_E_F_I_X_/_s_h_a_r_e_/_f_f_m_p_e_g) or in a _f_f_p_r_e_s_e_t_s
+       folder along the executable on win32, in that order. For example, if
+       the argument is "libvpx-1080p", it will search for the file
+       _l_i_b_v_p_x_-_1_0_8_0_p_._f_f_p_r_e_s_e_t.
+
+       If no such file is found, then ffmpeg will search for a file named
+       _c_o_d_e_c___n_a_m_e-_a_r_g.ffpreset in the above-mentioned directories, where
+       _c_o_d_e_c___n_a_m_e is the name of the codec to which the preset file options
+       will be applied. For example, if you select the video codec with
+       "-vcodec libvpx" and use "-vpre 1080p", then it will search for the
+       file _l_i_b_v_p_x_-_1_0_8_0_p_._f_f_p_r_e_s_e_t.
+
+TTIIPPSS
+       +o   For streaming at very low bitrates, use a low frame rate and a
+           small GOP size. This is especially true for RealVideo where the
+           Linux player does not seem to be very fast, so it can miss frames.
+           An example is:
+
+                   ffmpeg -g 3 -r 3 -t 10 -b:v 50k -s qcif -f rv10 /tmp/b.rm
+
+       +o   The parameter 'q' which is displayed while encoding is the current
+           quantizer. The value 1 indicates that a very good quality could be
+           achieved. The value 31 indicates the worst quality. If q=31 appears
+           too often, it means that the encoder cannot compress enough to meet
+           your bitrate. You must either increase the bitrate, decrease the
+           frame rate or decrease the frame size.
+
+       +o   If your computer is not fast enough, you can speed up the
+           compression at the expense of the compression ratio. You can use
+           '-me zero' to speed up motion estimation, and '-g 0' to disable
+           motion estimation completely (you have only I-frames, which means
+           it is about as good as JPEG compression).
+
+       +o   To have very low audio bitrates, reduce the sampling frequency
+           (down to 22050 Hz for MPEG audio, 22050 or 11025 for AC-3).
+
+       +o   To have a constant quality (but a variable bitrate), use the option
+           '-qscale n' when 'n' is between 1 (excellent quality) and 31 (worst
+           quality).
+
+EEXXAAMMPPLLEESS
+   PPrreesseett ffiilleess
+       A preset file contains a sequence of _o_p_t_i_o_n_=_v_a_l_u_e pairs, one for each
+       line, specifying a sequence of options which can be specified also on
+       the command line. Lines starting with the hash ('#') character are
+       ignored and are used to provide comments. Empty lines are also ignored.
+       Check the _p_r_e_s_e_t_s directory in the FFmpeg source tree for examples.
+
+       Preset files are specified with the "pre" option, this option takes a
+       preset name as input.  FFmpeg searches for a file named
+       _p_r_e_s_e_t___n_a_m_e.avpreset in the directories _$_A_V_C_O_N_V___D_A_T_A_D_I_R (if set), and
+       _$_H_O_M_E_/_._f_f_m_p_e_g, and in the data directory defined at configuration time
+       (usually _$_P_R_E_F_I_X_/_s_h_a_r_e_/_f_f_m_p_e_g) in that order.  For example, if the
+       argument is "libx264-max", it will search for the file
+       _l_i_b_x_2_6_4_-_m_a_x_._a_v_p_r_e_s_e_t.
+
+   VViiddeeoo aanndd AAuuddiioo ggrraabbbbiinngg
+       If you specify the input format and device then ffmpeg can grab video
+       and audio directly.
+
+               ffmpeg -f oss -i /dev/dsp -f video4linux2 -i /dev/video0 /tmp/out.mpg
+
+       Or with an ALSA audio source (mono input, card id 1) instead of OSS:
+
+               ffmpeg -f alsa -ac 1 -i hw:1 -f video4linux2 -i /dev/video0 /tmp/out.mpg
+
+       Note that you must activate the right video source and channel before
+       launching ffmpeg with any TV viewer such as
+       <hhttttpp::////lliinnuuxx..bbyytteesseexx..oorrgg//xxaawwttvv//> by Gerd Knorr. You also have to set
+       the audio recording levels correctly with a standard mixer.
+
+   XX1111 ggrraabbbbiinngg
+       Grab the X11 display with ffmpeg via
+
+               ffmpeg -f x11grab -video_size cif -framerate 25 -i :0.0 /tmp/out.mpg
+
+       0.0 is display.screen number of your X11 server, same as the DISPLAY
+       environment variable.
+
+               ffmpeg -f x11grab -video_size cif -framerate 25 -i :0.0+10,20 /tmp/out.mpg
+
+       0.0 is display.screen number of your X11 server, same as the DISPLAY
+       environment variable. 10 is the x-offset and 20 the y-offset for the
+       grabbing.
+
+   VViiddeeoo aanndd AAuuddiioo ffiillee ffoorrmmaatt ccoonnvveerrssiioonn
+       Any supported file format and protocol can serve as input to ffmpeg:
+
+       Examples:
+
+       +o   You can use YUV files as input:
+
+                   ffmpeg -i /tmp/test%d.Y /tmp/out.mpg
+
+           It will use the files:
+
+                   /tmp/test0.Y, /tmp/test0.U, /tmp/test0.V,
+                   /tmp/test1.Y, /tmp/test1.U, /tmp/test1.V, etc...
+
+           The Y files use twice the resolution of the U and V files. They are
+           raw files, without header. They can be generated by all decent
+           video decoders. You must specify the size of the image with the --ss
+           option if ffmpeg cannot guess it.
+
+       +o   You can input from a raw YUV420P file:
+
+                   ffmpeg -i /tmp/test.yuv /tmp/out.avi
+
+           test.yuv is a file containing raw YUV planar data. Each frame is
+           composed of the Y plane followed by the U and V planes at half
+           vertical and horizontal resolution.
+
+       +o   You can output to a raw YUV420P file:
+
+                   ffmpeg -i mydivx.avi hugefile.yuv
+
+       +o   You can set several input files and output files:
+
+                   ffmpeg -i /tmp/a.wav -s 640x480 -i /tmp/a.yuv /tmp/a.mpg
+
+           Converts the audio file a.wav and the raw YUV video file a.yuv to
+           MPEG file a.mpg.
+
+       +o   You can also do audio and video conversions at the same time:
+
+                   ffmpeg -i /tmp/a.wav -ar 22050 /tmp/a.mp2
+
+           Converts a.wav to MPEG audio at 22050 Hz sample rate.
+
+       +o   You can encode to several formats at the same time and define a
+           mapping from input stream to output streams:
+
+                   ffmpeg -i /tmp/a.wav -map 0:a -b:a 64k /tmp/a.mp2 -map 0:a -b:a 128k /tmp/b.mp2
+
+           Converts a.wav to a.mp2 at 64 kbits and to b.mp2 at 128 kbits.
+           '-map file:index' specifies which input stream is used for each
+           output stream, in the order of the definition of output streams.
+
+       +o   You can transcode decrypted VOBs:
+
+                   ffmpeg -i snatch_1.vob -f avi -c:v mpeg4 -b:v 800k -g 300 -bf 2 -c:a libmp3lame -b:a 128k snatch.avi
+
+           This is a typical DVD ripping example; the input is a VOB file, the
+           output an AVI file with MPEG-4 video and MP3 audio. Note that in
+           this command we use B-frames so the MPEG-4 stream is DivX5
+           compatible, and GOP size is 300 which means one intra frame every
+           10 seconds for 29.97fps input video. Furthermore, the audio stream
+           is MP3-encoded so you need to enable LAME support by passing
+           "--enable-libmp3lame" to configure.  The mapping is particularly
+           useful for DVD transcoding to get the desired audio language.
+
+           NOTE: To see the supported input formats, use "ffmpeg -formats".
+
+       +o   You can extract images from a video, or create a video from many
+           images:
+
+           For extracting images from a video:
+
+                   ffmpeg -i foo.avi -r 1 -s WxH -f image2 foo-%03d.jpeg
+
+           This will extract one video frame per second from the video and
+           will output them in files named _f_o_o_-_0_0_1_._j_p_e_g, _f_o_o_-_0_0_2_._j_p_e_g, etc.
+           Images will be rescaled to fit the new WxH values.
+
+           If you want to extract just a limited number of frames, you can use
+           the above command in combination with the -vframes or -t option, or
+           in combination with -ss to start extracting from a certain point in
+           time.
+
+           For creating a video from many images:
+
+                   ffmpeg -f image2 -i foo-%03d.jpeg -r 12 -s WxH foo.avi
+
+           The syntax "foo-%03d.jpeg" specifies to use a decimal number
+           composed of three digits padded with zeroes to express the sequence
+           number. It is the same syntax supported by the C printf function,
+           but only formats accepting a normal integer are suitable.
+
+           When importing an image sequence, -i also supports expanding shell-
+           like wildcard patterns (globbing) internally, by selecting the
+           image2-specific "-pattern_type glob" option.
+
+           For example, for creating a video from filenames matching the glob
+           pattern "foo-*.jpeg":
+
+                   ffmpeg -f image2 -pattern_type glob -i 'foo-*.jpeg' -r 12 -s WxH foo.avi
+
+       +o   You can put many streams of the same type in the output:
+
+                   ffmpeg -i test1.avi -i test2.avi -map 1:1 -map 1:0 -map 0:1 -map 0:0 -c copy -y test12.nut
+
+           The resulting output file _t_e_s_t_1_2_._n_u_t will contain the first four
+           streams from the input files in reverse order.
+
+       +o   To force CBR video output:
+
+                   ffmpeg -i myfile.avi -b 4000k -minrate 4000k -maxrate 4000k -bufsize 1835k out.m2v
+
+       +o   The four options lmin, lmax, mblmin and mblmax use 'lambda' units,
+           but you may use the QP2LAMBDA constant to easily convert from 'q'
+           units:
+
+                   ffmpeg -i src.ext -lmax 21*QP2LAMBDA dst.ext
+
+SSEEEE AALLSSOO
+       _f_f_m_p_e_g_-_a_l_l(1), _f_f_p_l_a_y(1), _f_f_p_r_o_b_e(1), _f_f_s_e_r_v_e_r(1), _f_f_m_p_e_g_-_u_t_i_l_s(1),
+       _f_f_m_p_e_g_-_s_c_a_l_e_r(1), _f_f_m_p_e_g_-_r_e_s_a_m_p_l_e_r(1), _f_f_m_p_e_g_-_c_o_d_e_c_s(1),
+       _f_f_m_p_e_g_-_b_i_t_s_t_r_e_a_m_-_f_i_l_t_e_r_s(1), _f_f_m_p_e_g_-_f_o_r_m_a_t_s(1), _f_f_m_p_e_g_-_d_e_v_i_c_e_s(1),
+       _f_f_m_p_e_g_-_p_r_o_t_o_c_o_l_s(1), _f_f_m_p_e_g_-_f_i_l_t_e_r_s(1)
+
+AAUUTTHHOORRSS
+       The FFmpeg developers.
+
+       For details about the authorship, see the Git history of the project
+       (git://source.ffmpeg.org/ffmpeg), e.g. by typing the command ggiitt lloogg in
+       the FFmpeg source directory, or browsing the online repository at
+       <hhttttpp::////ssoouurrccee..ffffmmppeegg..oorrgg>.
+
+       Maintainers for the specific components are listed in the file
+       _M_A_I_N_T_A_I_N_E_R_S in the source code tree.
+
+
+
+                                  2015-02-25                         FFMPEG(1)

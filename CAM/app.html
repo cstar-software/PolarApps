@@ -1,0 +1,19 @@
+<html>
+<head>
+  <link rel="stylesheet" href="./css/app.css">
+</head>
+<body>
+  <div id="containerDiv" class="container">
+    <div id="contentDiv" class="content">
+      <input type="text" id="subjID" name="subjid" value="" placeholder="ID" oninput="updateFilenamePreview();">
+      <input type="text" id="sessID" name="sessid" value="" placeholder="Session" oninput="updateFilenamePreview();">
+      <input type="text" id="taskID" name="taskid" value="" placeholder="Task" oninput="updateFilenamePreview();">
+      <p id="fileNamePreview"></p>
+      <div class="circle-btn" id="recordBtn"></div>
+    </div>
+  </div>
+  <script type="text/javascript" src="./core.js"></script>
+  <script type="text/javascript" src="./menu.js"></script>
+  <script type="text/javascript" src="./cloudChecker.js"></script>
+</body>
+</html>

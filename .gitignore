@@ -1,0 +1,11 @@
+# Specify filepatterns you want git to ignore.
+
+Discourse/
+Phonological Assessments/
+Phonological Video Treatment/
+PNT/
+PRT/
+Treated40/
+
+dist/
+node_modules/
