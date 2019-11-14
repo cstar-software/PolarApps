@@ -33,6 +33,7 @@
     "csvsync": "^1.0.1",
     "electron": "^1.8.2",
     "electron-packager": "^8.7.2",
+    "grunt-bump": "^0.8.0",
     "jQuery": "^1.7.4",
     "moment": "^2.17.1",
     "systeminformation": "^3.16.0"

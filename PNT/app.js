@@ -36,7 +36,7 @@ function createWindow () {
     slashes: true
   }))
 
-  console.log('https://philadelphia-naming-test.herokuapp.com/'+'update/'+platform+'/'+version)
+  // console.log('https://philadelphia-naming-test.herokuapp.com/'+'update/'+platform+'/'+version)
   // autoUpdater.setFeedURL('https://philadelphia-naming-test.herokuapp.com/'+'update/'+platform+'/'+version);
   // autoUpdater.checkForUpdates()
 

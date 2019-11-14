@@ -36,7 +36,8 @@ function createWindow () {
     slashes: true
   }))
 
-  console.log('https://treated40.herokuapp.com/'+'update/'+platform+'/'+version)
+
+  // console.log('https://treated40.herokuapp.com/'+'update/'+platform+'/'+version)
   // autoUpdater.setFeedURL('https://treated40.herokuapp.com/'+'update/'+platform+'/'+version);
   // autoUpdater.checkForUpdates()
 
@@ -50,6 +51,17 @@ function createWindow () {
     // when you should delete the corresponding element.
     mainWindow = null
   })
+
+  // TODO: options for auto-setting brightness
+  // the original method may have failed on newer systems
+
+  // password = "yummies5"
+  // exec("echo "+password+" | sudo -S osascript -e \"set volume input volume 100\" ")
+  // exec("echo "+password+" | sudo -S osascript -e \"set volume output volume 100\" ")
+  // brightnessPath = path.join(__dirname, 'assets', 'brightness')
+  // exec(brightnessPath+" 1")
+  
+  // system.display.setBrightness(maxBrightness).then(function() {});
 
   function checkForMaxBrightness() {
     system.display.getBrightness().then(function(brightness) {

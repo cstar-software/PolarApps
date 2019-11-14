@@ -37,8 +37,8 @@ function createWindow () {
   }))
 
   // Open the DevTools.
-  //mainWindow.webContents.openDevTools()
-  console.log('https://phonological-assessments.herokuapp.com/'+'update/'+platform+'/'+version)
+  // mainWindow.webContents.openDevTools()
+  // console.log('https://phonological-assessments.herokuapp.com/'+'update/'+platform+'/'+version)
   // autoUpdater.setFeedURL('https://phonological-assessments.herokuapp.com/'+'update/'+platform+'/'+version);
   // autoUpdater.checkForUpdates()
 

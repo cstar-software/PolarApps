@@ -39,7 +39,7 @@ function createWindow () {
 
   // Open the DevTools.
   //mainWindow.webContents.openDevTools()
-  console.log('https://phonological-video-treatment.herokuapp.com/'+'update/'+platform+'/'+version)
+  // console.log('https://phonological-video-treatment.herokuapp.com/'+'update/'+platform+'/'+version)
   // autoUpdater.setFeedURL('https://phonological-video-treatment.herokuapp.com/'+'update/'+platform+'/'+version);
   // autoUpdater.checkForUpdates()
 

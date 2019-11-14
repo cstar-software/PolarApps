@@ -39,7 +39,7 @@ function createWindow () {
 
   // Open the DevTools.
   //mainWindow.webContents.openDevTools()
-  console.log('https://philadelphia-repetition-test.herokuapp.com/'+'update/'+platform+'/'+version)
+  // console.log('https://philadelphia-repetition-test.herokuapp.com/'+'update/'+platform+'/'+version)
   // autoUpdater.setFeedURL('https://philadelphia-repetition-test.herokuapp.com/'+'update/'+platform+'/'+version);
   // autoUpdater.checkForUpdates()
 
